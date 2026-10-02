@@ -1,0 +1,29 @@
+# Python environments and generated files
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+.aws/
+*.pem
+*.key
+
+# Node dependencies and build output
+node_modules/
+dist/
+build/
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
