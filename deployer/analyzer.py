@@ -56,17 +56,32 @@ def find_fastapi_entrypoint(path):
 
     return None
 
+def analyze_python(requirements, result):
+    result.update(language="python", dependency_file="requirements.txt")
+    content = read_text_file(requirements).lower()
+
+    if "fastapi" in content:
+        result["framework"] = "fastapi"
+        result["entrypoint"] = find_fastapi_entrypoint(requirements.parent)
+
+
 def analyze_node(package_json, result):
     package = json.loads(read_text_file(package_json))
     if not isinstance(package, dict):
         raise ValueError("package.json must contain a JSON object")
+
     sections = {}
     for name in ("dependencies", "devDependencies", "scripts"):
         sections[name] = package.get(name, {})
         if not isinstance(sections[name], dict):
             raise ValueError(f"package.json: {name} must be an object")
+
     result.update(language="node", dependency_file="package.json")
-    if "express" in sections["dependencies"] or "express" in sections["devDependencies"]:
+    has_express = (
+        "express" in sections["dependencies"]
+        or "express" in sections["devDependencies"]
+    )
+    if has_express:
         result["framework"] = "express"
         start = sections["scripts"].get("start")
         if not isinstance(start, str) or not start.strip():
@@ -74,31 +89,49 @@ def analyze_node(package_json, result):
         result["start_command"] = start
 
 
-def analyze_dotnet(project_files, result):
-    if len(project_files) != 1:
-        raise ValueError("Use a directory containing exactly one .csproj file")
-    project = project_files[0]
-    try:
-        root = ET.fromstring(read_text_file(project))
-    except ET.ParseError as error:
-        raise ValueError(f"Invalid project XML: {project.name}") from error
-    result.update(language="dotnet", dependency_file=project.name)
-    if root.get("Sdk") != "Microsoft.NET.Sdk.Web":
-        return
+def read_dotnet_properties(root):
     properties = {}
     for group in root.findall("PropertyGroup"):
         for child in group:
             if group.get("Condition") or child.get("Condition"):
                 raise ValueError("Conditional .NET properties are not supported yet")
             properties[child.tag] = (child.text or "").strip()
+    return properties
+
+
+def analyze_dotnet(project_files, result):
+    if len(project_files) != 1:
+        raise ValueError("Use a directory containing exactly one .csproj file")
+
+    project = project_files[0]
+    try:
+        root = ET.fromstring(read_text_file(project))
+    except ET.ParseError as error:
+        raise ValueError(f"Invalid project XML: {project.name}") from error
+
+    result.update(language="dotnet", dependency_file=project.name)
+    if root.get("Sdk") != "Microsoft.NET.Sdk.Web":
+        return
+
+    properties = read_dotnet_properties(root)
     target = properties.get("TargetFramework", "")
     if properties.get("TargetFrameworks") or not re.fullmatch(r"net(8|9|10)\.0", target):
-        raise ValueError("ASP.NET Core requires a single TargetFramework: net8.0, net9.0 or net10.0")
+        raise ValueError(
+            "ASP.NET Core requires a single TargetFramework: net8.0, net9.0 or net10.0"
+        )
+
     assembly = properties.get("AssemblyName", project.stem)
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", assembly):
-        raise ValueError("Unsupported AssemblyName; use letters, digits, dots, hyphens or underscores")
-    result.update(framework="aspnetcore", entrypoint=f"{assembly}.dll",
-                  dotnet_version=target[3:], project_file=project.name)
+        raise ValueError(
+            "Unsupported AssemblyName; use letters, digits, dots, hyphens or underscores"
+        )
+
+    result.update(
+        framework="aspnetcore",
+        entrypoint=f"{assembly}.dll",
+        dotnet_version=target[3:],
+        project_file=project.name,
+    )
 
 
 def analyze_project(app_path):
@@ -116,15 +149,7 @@ def analyze_project(app_path):
     package_json = path / "package.json"
 
     if requirements.exists():
-        result["language"] = "python"
-        result["dependency_file"] = "requirements.txt"
-
-        content = read_text_file(requirements).lower()
-
-        if "fastapi" in content:
-            result["framework"] = "fastapi"
-            result["entrypoint"] = find_fastapi_entrypoint(path)
-
+        analyze_python(requirements, result)
     elif package_json.exists():
         analyze_node(package_json, result)
     else:

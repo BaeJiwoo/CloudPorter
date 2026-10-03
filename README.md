@@ -141,6 +141,18 @@ Docker 명령의 제한 시간은 각각 600초입니다.
 | tests/test_*.py | Docker 없이 분석·생성·배포 실패 흐름 검증 |
 | tests/docker_smoke.py | 임시 복사본과 고유 컨테이너 이름으로 실제 배포·HTTP 검증 |
 
+코드를 처음 읽을 때는 다음 순서를 권장합니다.
+
+1. `deploy.py`의 `main()`에서 CLI 입력과 종료 코드 처리를 확인합니다.
+2. 같은 파일의 `deploy()`에서 분석 → 생성 → 빌드 → 검증 → 교체 흐름을 읽습니다.
+3. `analyzer.py`의 `analyze_project()`에서 Python·Node·.NET 분석 함수로 따라갑니다.
+4. `dockerfile_generator.py`의 `generate_dockerfile()`에서 프레임워크별 템플릿을 확인합니다.
+5. 세부 실행은 `run_docker()`·`run_container()`, 상태 확인은 `health_check()`에서 살펴봅니다.
+
+`deploy.py`의 함수는 CLI·경로 → 포트 탐색 → Docker 작업 → Health Check → 배포 흐름
+순서로 배치되어 있습니다. 시간 제한과 재시도 정책은 파일 상단의 상수에 모았습니다.
+Dockerfile 저장은 `write_dockerfile()`이 공통으로 담당합니다.
+
 배포 흐름: 경로 확인 → Candidate Port 선택 → 분석 → Dockerfile 생성 → 빌드
 → Candidate 실행·검증 → Current 삭제 → Candidate 삭제 → Current 재실행·검증.
 
