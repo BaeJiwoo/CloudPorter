@@ -1,11 +1,14 @@
 import ast
+import json
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
 def read_text_file(path):
     encodings = [
-        "utf-8",
         "utf-8-sig",
+        "utf-8",
         "utf-16",
         "cp949"
     ]
@@ -53,6 +56,51 @@ def find_fastapi_entrypoint(path):
 
     return None
 
+def analyze_node(package_json, result):
+    package = json.loads(read_text_file(package_json))
+    if not isinstance(package, dict):
+        raise ValueError("package.json must contain a JSON object")
+    sections = {}
+    for name in ("dependencies", "devDependencies", "scripts"):
+        sections[name] = package.get(name, {})
+        if not isinstance(sections[name], dict):
+            raise ValueError(f"package.json: {name} must be an object")
+    result.update(language="node", dependency_file="package.json")
+    if "express" in sections["dependencies"] or "express" in sections["devDependencies"]:
+        result["framework"] = "express"
+        start = sections["scripts"].get("start")
+        if not isinstance(start, str) or not start.strip():
+            raise ValueError("Express requires a non-empty scripts.start in package.json")
+        result["start_command"] = start
+
+
+def analyze_dotnet(project_files, result):
+    if len(project_files) != 1:
+        raise ValueError("Use a directory containing exactly one .csproj file")
+    project = project_files[0]
+    try:
+        root = ET.fromstring(read_text_file(project))
+    except ET.ParseError as error:
+        raise ValueError(f"Invalid project XML: {project.name}") from error
+    result.update(language="dotnet", dependency_file=project.name)
+    if root.get("Sdk") != "Microsoft.NET.Sdk.Web":
+        return
+    properties = {}
+    for group in root.findall("PropertyGroup"):
+        for child in group:
+            if group.get("Condition") or child.get("Condition"):
+                raise ValueError("Conditional .NET properties are not supported yet")
+            properties[child.tag] = (child.text or "").strip()
+    target = properties.get("TargetFramework", "")
+    if properties.get("TargetFrameworks") or not re.fullmatch(r"net(8|9|10)\.0", target):
+        raise ValueError("ASP.NET Core requires a single TargetFramework: net8.0, net9.0 or net10.0")
+    assembly = properties.get("AssemblyName", project.stem)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", assembly):
+        raise ValueError("Unsupported AssemblyName; use letters, digits, dots, hyphens or underscores")
+    result.update(framework="aspnetcore", entrypoint=f"{assembly}.dll",
+                  dotnet_version=target[3:], project_file=project.name)
+
+
 def analyze_project(app_path):
     path = Path(app_path)
 
@@ -60,7 +108,8 @@ def analyze_project(app_path):
         "language": None,
         "framework": None,
         "dependency_file": None,
-        "entrypoint": None
+        "entrypoint": None,
+        "start_command": None
     }
 
     requirements = path / "requirements.txt"
@@ -77,16 +126,11 @@ def analyze_project(app_path):
             result["entrypoint"] = find_fastapi_entrypoint(path)
 
     elif package_json.exists():
-        result["language"] = "node"
-        result["dependency_file"] = "package.json"
-
-        content = read_text_file(package_json).lower()
-
-        if "express" in content:
-            result["framework"] = "express"
+        analyze_node(package_json, result)
+    else:
+        project_files = sorted(path.glob("*.csproj"))
+        if project_files:
+            analyze_dotnet(project_files, result)
 
     return result
 
-# if __name__ == "__main__":
-#    result = analyze_project("../sample-app")
-#    print(result)
