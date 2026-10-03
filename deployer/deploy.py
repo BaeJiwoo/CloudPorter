@@ -150,7 +150,9 @@ def remove_container(container_name):
 def run_candidate(candidate_port, container_port):
     print("\n[2] Starting candidate container...")
 
-    remove_container(CANDIDATE_CONTAINER)
+    if not remove_container(CANDIDATE_CONTAINER):
+        print("Candidate cleanup failed")
+        return False
 
     result = subprocess.run(
         [
@@ -321,7 +323,10 @@ def deploy(
     print("\nCandidate is healthy")
     print("\nReplacing current service...")
 
-    remove_container(CURRENT_CONTAINER)
+    if not remove_container(CURRENT_CONTAINER):
+        print("Deployment aborted: current container removal failed")
+        return
+
     remove_container(CANDIDATE_CONTAINER)
 
     if not run_current(
