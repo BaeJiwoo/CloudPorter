@@ -40,6 +40,60 @@ ASP.NET Core는 프로젝트에 직접 선언된 단일 TargetFramework와 선�
 ASPNETCORE_URLS로 지정하므로 앱에서 주소를 별도로 강제하지 않아야 합니다.
 HTTPS 인증서 설정은 포함하지 않습니다.
 
+## 서비스 구조
+
+CloudPorter는 사용자가 실행하는 Python CLI입니다. 분석과 Dockerfile 생성을 담당하는
+모듈을 호출한 뒤 로컬 Docker Engine으로 앱을 배포합니다. 배포된 앱으로 들어오는
+HTTP 요청은 Host Port를 통해 컨테이너로 전달됩니다.
+
+```mermaid
+flowchart LR
+    User["사용자"] -->|"앱 경로 · CLI 옵션"| CLI["deploy.py<br/>배포 흐름 · Health Check"]
+    Source["로컬 Web App<br/>FastAPI · Express · ASP.NET Core"] -->|"프로젝트 파일"| Analyzer["analyzer.py<br/>프레임워크 · 실행 정보 분석"]
+    CLI -->|"분석 요청"| Analyzer
+    Analyzer -->|"분석 결과"| Generator["dockerfile_generator.py<br/>프레임워크별 Dockerfile 생성"]
+    CLI -->|"생성 요청 · 내부 포트"| Generator
+    Generator -->|"저장"| Dockerfile["앱 폴더의 Dockerfile"]
+    CLI -->|"Docker 명령"| Engine["로컬 Docker Engine"]
+    Source -->|"빌드 컨텍스트"| Engine
+    Dockerfile -->|"빌드 설정"| Engine
+    Engine -->|"빌드"| Image["Docker Image"]
+    Image -->|"검증용 실행"| Candidate["Candidate Container"]
+    Image -->|"검증 후 새로 실행"| Current["Current Container"]
+    CLI -.->|"임시 Host Port로 검사"| Candidate
+    CLI -.->|"지정 Host Port로 검사"| Current
+    Browser["브라우저 · API 클라이언트"] -->|"지정 Host Port → 내부 포트"| Current
+```
+
+Candidate는 임시 Host Port에서 새 이미지를 검증하는 컨테이너이고, Current는 사용자가
+접속하는 컨테이너입니다. 예를 들어 Current가 `9000:8080`을 사용하면 Candidate는
+9001부터 사용 가능한 Host Port를 찾아 같은 내부 포트 8080으로 연결합니다.
+
+### 컨테이너 교체 흐름
+
+```mermaid
+flowchart TD
+    Start["앱 경로 확인 · Candidate Port 선택"] --> Analyze["프로젝트 분석 · Dockerfile 생성"]
+    Analyze --> Build["Docker 이미지 빌드"]
+    Build --> Candidate["기존 Candidate 정리 · 새 Candidate 실행"]
+    Candidate --> Check{"Candidate Health Check"}
+    Check -->|"실패"| Keep["Candidate 정리 시도<br/>기존 Current 유지 · 배포 실패"]
+    Check -->|"성공"| RemoveCurrent["기존 Current 삭제"]
+    RemoveCurrent -->|"성공"| RemoveCandidate["검증한 Candidate 삭제"]
+    RemoveCurrent -->|"실패"| Stop["배포 중단"]
+    RemoveCandidate -->|"실패"| Stop
+    RemoveCandidate -->|"성공"| Run["동일 이미지로 새 Current 실행"]
+    Run -->|"실행 성공"| Final{"Current Health Check"}
+    Run -->|"실행 실패"| Failed["배포 실패<br/>이전 버전 자동 복구 없음"]
+    Final -->|"성공"| Success["Deployment Success"]
+    Final -->|"실패"| Failed
+```
+
+분석·Dockerfile 생성·빌드·Candidate 시작이 실패해도 배포를 중단합니다.
+Candidate 자체를 Current로 승격하지 않고 새 컨테이너를 실행하므로 교체 중 다운타임이
+발생합니다. Current 삭제 후의 실패에는 자동 복구가 없습니다.
+AWS/GCP 및 Cloud Adapter는 아직 이 구조에 포함되지 않았습니다.
+
 ## 실행
 
 Python 3.10 이상과 Linux 컨테이너 모드의 Docker Desktop/Engine이 필요합니다.
