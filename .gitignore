@@ -22,6 +22,9 @@ __pycache__/
 node_modules/
 dist/
 build/
+bin/
+obj/
+.vs/
 
 # Logs and OS files
 *.log

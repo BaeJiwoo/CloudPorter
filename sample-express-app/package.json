@@ -1,0 +1,5 @@
+{
+  "name": "sample-express-app",
+  "scripts": { "start": "node app.js" },
+  "dependencies": { "express": "^5.0.0" }
+}
