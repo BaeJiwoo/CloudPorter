@@ -327,7 +327,9 @@ def deploy(
         print("Deployment aborted: current container removal failed")
         return
 
-    remove_container(CANDIDATE_CONTAINER)
+    if not remove_container(CANDIDATE_CONTAINER):
+        print("Deployment aborted: candidate container removal failed")
+        return
 
     if not run_current(
         current_port,
